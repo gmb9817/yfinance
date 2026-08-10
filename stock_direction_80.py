@@ -1199,7 +1199,35 @@ def print_summary(
     print("=" * 72)
 
 
-def parse_arguments() -> ResearchConfig:
+def is_notebook_runtime() -> bool:
+    return "ipykernel" in sys.modules or "google.colab" in sys.modules
+
+
+def clean_runtime_arguments(argv: list[str] | None = None) -> list[str]:
+    raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    cleaned_arguments: list[str] = []
+    index = 0
+    while index < len(raw_arguments):
+        current = raw_arguments[index]
+        if current == "-f" and index + 1 < len(raw_arguments):
+            kernel_file = raw_arguments[index + 1]
+            if kernel_file.endswith(".json") and "kernel-" in Path(kernel_file).name:
+                index += 2
+                continue
+        if current.startswith("-f="):
+            kernel_file = current.split("=", 1)[1]
+            if kernel_file.endswith(".json") and "kernel-" in Path(kernel_file).name:
+                index += 1
+                continue
+        if current.startswith(("--IPKernelApp.", "--HistoryManager.", "--Session.")):
+            index += 1
+            continue
+        cleaned_arguments.append(current)
+        index += 1
+    return cleaned_arguments
+
+
+def parse_arguments(argv: list[str] | None = None) -> ResearchConfig:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ticker", default="000660.KS")
     parser.add_argument("--start", default="2010-01-01")
@@ -1218,7 +1246,7 @@ def parse_arguments() -> ResearchConfig:
     parser.add_argument("--mode", choices=["fast", "full"], default="full")
     parser.add_argument("--output-dir", default="stock80_output")
     parser.add_argument("--random-state", type=int, default=42)
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(clean_runtime_arguments(argv))
     return ResearchConfig(
         ticker=arguments.ticker.strip().upper(),
         start=arguments.start,
@@ -1240,8 +1268,8 @@ def parse_arguments() -> ResearchConfig:
     )
 
 
-def main() -> int:
-    config = parse_arguments()
+def main(argv: list[str] | None = None) -> int:
+    config = parse_arguments(argv)
     output_dir = Path(config.output_dir)
     panel_tickers, context_specification = get_universe(config.ticker, config.mode)
     download_tickers = unique_ordered(panel_tickers + [ticker for ticker, _ in context_specification.values()])
@@ -1350,10 +1378,16 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
+        exit_code = main()
     except KeyboardInterrupt:
         print("중단되었습니다.", file=sys.stderr)
+        if is_notebook_runtime():
+            raise
         raise SystemExit(130)
     except Exception as error:
         print(f"오류: {error}", file=sys.stderr)
+        if is_notebook_runtime():
+            raise
         raise SystemExit(1)
+    if not is_notebook_runtime():
+        raise SystemExit(exit_code)
